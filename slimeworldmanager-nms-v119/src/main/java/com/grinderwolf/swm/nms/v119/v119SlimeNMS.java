@@ -16,6 +16,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.Holder;
 import net.minecraft.core.MappedRegistry;
 import net.minecraft.core.Registry;
+import net.minecraft.core.WritableRegistry;
 import net.minecraft.data.worldgen.DimensionTypes;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
@@ -24,6 +25,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.server.dedicated.DedicatedServerProperties;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.datafix.DataFixTypes;
@@ -33,13 +35,11 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.WorldGenSettings;
-import net.minecraft.world.level.storage.LevelStorageSource;
-import net.minecraft.world.level.storage.LevelVersion;
-import net.minecraft.world.level.storage.PrimaryLevelData;
-import net.minecraft.world.level.storage.WorldData;
+import net.minecraft.world.level.storage.*;
 import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -54,6 +54,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Function;
 
 @Getter
 public class v119SlimeNMS implements SlimeNMS {
@@ -94,13 +95,30 @@ public class v119SlimeNMS implements SlimeNMS {
         }
     }
 
+    private WorldGenSettings getWorldGenSettings(MinecraftServer server) {
+        DedicatedServerProperties serverProperties = ((DedicatedServer) server).getProperties();
+        Registry<LevelStem> dimensions = serverProperties.getWorldGenSettings(server.registryAccess()).dimensions();
+
+        WritableRegistry<LevelStem> writableRegistry = new MappedRegistry<>(Registry.LEVEL_STEM_REGISTRY, Lifecycle.experimental(), null);
+
+        for(Map.Entry<ResourceKey<LevelStem>, LevelStem> entry : dimensions.entrySet()) {
+            ResourceKey<LevelStem> resourceKey = entry.getKey();
+            writableRegistry.register(resourceKey, new LevelStem(entry.getValue().typeHolder(), entry.getValue().generator()), dimensions.lifecycle(entry.getValue()));
+        }
+
+        LevelStem overworldStem = new LevelStem(server.registryAccess().registryOrThrow(Registry.DIMENSION_TYPE_REGISTRY).getHolderOrThrow(BuiltinDimensionTypes.OVERWORLD), serverProperties.getWorldGenSettings(server.registryAccess()).overworld());
+
+
+        writableRegistry.register(LevelStem.OVERWORLD, overworldStem, Lifecycle.stable());
+
+        return new WorldGenSettings(0, false, false, writableRegistry);
+    }
+
     @Override
     public Object injectDefaultWorlds() {
         if (!injectFakeDimensions) {
             return null;
         }
-
-        System.out.println("INJECTING: " + defaultWorld + " " + defaultNetherWorld + " " + defaultEndWorld);
 
         MinecraftServer server = MinecraftServer.getServer();
         server.server.scoreboardManager = new CraftScoreboardManager(server, server.getScoreboard());
@@ -121,33 +139,32 @@ public class v119SlimeNMS implements SlimeNMS {
 
     @Override
     public void setDefaultWorlds(SlimeWorld normalWorld, SlimeWorld netherWorld, SlimeWorld endWorld) {
-        try {
-            MinecraftServer server = MinecraftServer.getServer();
+        MinecraftServer server = MinecraftServer.getServer();
+        DedicatedServerProperties serverProperties = ((DedicatedServer) server).getProperties();
 
-            LevelSettings worldsettings;
-            WorldGenSettings generatorsettings;
+        // WORLDGEN SETTINGS
 
-            DedicatedServerProperties dedicatedserverproperties = ((DedicatedServer) server).getProperties();
-
-            worldsettings = new LevelSettings(dedicatedserverproperties.levelName,
-                    dedicatedserverproperties.gamemode, dedicatedserverproperties.hardcore, dedicatedserverproperties.difficulty,
-                    false, new GameRules(),
-                    server.datapackconfiguration);
-            generatorsettings = dedicatedserverproperties.getWorldGenSettings(server.registryAccess());
-
-            WorldData data = new PrimaryLevelData(worldsettings, generatorsettings, Lifecycle.stable());
-
-            var field = MinecraftServer.class.getDeclaredField("m");
-
-            field.setAccessible(true);
-            field.set(server, data); // Set default world settings ( prevent mean nullpointers)
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            e.printStackTrace();
-        }
+        LevelSettings worldsettings = new LevelSettings(serverProperties.levelName,
+                serverProperties.gamemode, serverProperties.hardcore, serverProperties.difficulty,
+                false, new GameRules(),
+                server.datapackconfiguration);
 
         if (normalWorld != null) {
+            // USES WORLDGENSETTINGS
+            WorldData data = new PrimaryLevelData(worldsettings, getWorldGenSettings(server), Lifecycle.stable());
+            System.out.println("DOES IT CONTAIN-1? " + data.worldGenSettings().dimensions().containsKey(LevelStem.OVERWORLD));
+            try {
+                var field = MinecraftServer.class.getDeclaredField("m");
+
+                field.setAccessible(true);
+                field.set(server, data); // Set default world settings ( prevent mean nullpointers)
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                e.printStackTrace();
+            }
+
             normalWorld.getPropertyMap().setValue(SlimeProperties.ENVIRONMENT, World.Environment.NORMAL.toString().toLowerCase());
             defaultWorld = createCustomWorld(normalWorld, Level.OVERWORLD);
+
             injectFakeDimensions = true;
         }
 
@@ -162,7 +179,6 @@ public class v119SlimeNMS implements SlimeNMS {
             defaultEndWorld = createCustomWorld(endWorld, Level.END);
             injectFakeDimensions = true;
         }
-
     }
 
     @Override
@@ -200,6 +216,7 @@ public class v119SlimeNMS implements SlimeNMS {
         String worldName = world.getName();
 
         PrimaryLevelData worldDataServer = createWorldData(world);
+        System.out.println("DOES IT CONTAIN-2? " + worldDataServer.worldGenSettings().dimensions().containsKey(LevelStem.OVERWORLD));
         World.Environment environment = getEnvironment(world);
         ResourceKey<LevelStem> dimension = switch (environment) {
             case NORMAL -> LevelStem.OVERWORLD;
@@ -211,50 +228,18 @@ public class v119SlimeNMS implements SlimeNMS {
         Registry<LevelStem> registryMaterials = worldDataServer.worldGenSettings().dimensions();
         LevelStem worldDimension = registryMaterials.get(dimension);
 
-
-        Holder<DimensionType> type = null;
-        {
-            DimensionType predefinedType = worldDimension.typeHolder().value();
-
-            OptionalLong fixedTime = switch (environment) {
-                case NORMAL -> OptionalLong.empty();
-                case NETHER -> OptionalLong.of(18000L);
-                case THE_END -> OptionalLong.of(6000L);
-                case CUSTOM -> throw new UnsupportedOperationException();
-            };
-            double light = switch (environment) {
-                case NORMAL, THE_END -> 0;
-                case NETHER -> 0.1;
-                case CUSTOM -> throw new UnsupportedOperationException();
-            };
-
-            TagKey<Block> infiniburn = switch (environment) {
-                case NORMAL -> BlockTags.INFINIBURN_OVERWORLD;
-                case NETHER -> BlockTags.INFINIBURN_NETHER;
-                case THE_END -> BlockTags.INFINIBURN_END;
-                case CUSTOM -> throw new UnsupportedOperationException();
-            };
-
-            type = Holder.direct(new DimensionType(fixedTime, predefinedType.hasSkyLight(), predefinedType.hasCeiling(), predefinedType.ultraWarm(),
-                    predefinedType.natural(), predefinedType.coordinateScale(), predefinedType.bedWorks(), predefinedType.respawnAnchorWorks(),
-                    predefinedType.minY(), predefinedType.height(), predefinedType.logicalHeight(), predefinedType.infiniburn(),
-                    predefinedType.effectsLocation(), predefinedType.ambientLight(), predefinedType.monsterSettings()));
-        }
-
-        ChunkGenerator chunkGenerator = worldDimension.generator();
-
         ResourceKey<Level> worldKey = dimensionOverride == null ? ResourceKey.create(Registry.DIMENSION_REGISTRY,
                 new ResourceLocation(worldName.toLowerCase(Locale.ENGLISH))) : dimensionOverride;
 
-        CustomWorldServer level;
+        CustomWorldServer level = null;
         CraftServer server = MinecraftServer.getServer().server;
 
         try {
             level = new CustomWorldServer(nmsWorld, worldDataServer, worldKey, dimension, worldDimension,
-                    environment, server.getGenerator(worldName), server.getBiomeProvider(worldName));
+                    environment, server.getGenerator(worldName), server.getBiomeProvider(worldName), getWorldGenSettings(MinecraftServer.getServer()));
             nmsWorld.setHandle(level);
         } catch (IOException ex) {
-            throw new RuntimeException(ex); // TODO do something better with this?
+            ex.printStackTrace();
         }
 
         level.setReady(true);
@@ -286,8 +271,10 @@ public class v119SlimeNMS implements SlimeNMS {
             LevelVersion levelVersion = LevelVersion.parse(dynamic);
             LevelSettings worldSettings = LevelSettings.parse(dynamic, mcServer.datapackconfiguration);
 
+            // USES WORLDGENSETTINGS
             worldDataServer = PrimaryLevelData.parse(dynamic, mcServer.getFixerUpper(), dataVersion, null,
-                    worldSettings, levelVersion, serverProps.getWorldGenSettings(mcServer.registryHolder), Lifecycle.stable());
+                    worldSettings, levelVersion, getWorldGenSettings(mcServer), Lifecycle.stable());
+            System.out.println("DOES IT CONTAIN-3? " + worldDataServer.worldGenSettings().dimensions().containsKey(LevelStem.OVERWORLD));
         } else {
 
             // Game rules
@@ -311,7 +298,8 @@ public class v119SlimeNMS implements SlimeNMS {
             LevelSettings worldSettings = new LevelSettings(worldName, serverProps.gamemode, false,
                     serverProps.difficulty, false, rules, mcServer.datapackconfiguration);
 
-            worldDataServer = new PrimaryLevelData(worldSettings, serverProps.getWorldGenSettings(mcServer.registryHolder), Lifecycle.stable());
+            worldDataServer = new PrimaryLevelData(worldSettings, getWorldGenSettings(mcServer), Lifecycle.stable());
+            System.out.println("DOES IT CONTAIN-4? " + worldDataServer.worldGenSettings().dimensions().containsKey(LevelStem.OVERWORLD));
         }
 
         worldDataServer.checkName(worldName);

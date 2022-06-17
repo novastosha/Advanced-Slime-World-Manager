@@ -64,10 +64,11 @@ public class SWMPlugin extends JavaPlugin implements SlimePlugin, Listener {
         }
     }
     
-    private static final int BSTATS_ID = 5419;
+    private static final int BSTATS_ID = 15496;
 
     @Override
     public void onLoad() {
+        System.out.println("LOADED WORLDS: " + this.loadedWorlds);
         isPaperMC = checkIsPaper();
 
         try {
@@ -107,6 +108,8 @@ public class SWMPlugin extends JavaPlugin implements SlimePlugin, Listener {
                 Bukkit.getServer().shutdown();
             }
 
+
+            System.out.println("LOADED WORLDS-1: " + this.loadedWorlds);
             SlimeWorld defaultWorld = loadedWorlds.get(defaultWorldName);
             SlimeWorld netherWorld = getServer().getAllowNether() ? loadedWorlds.get(defaultWorldName + "_nether") : null;
             SlimeWorld endWorld = getServer().getAllowEnd() ? loadedWorlds.get(defaultWorldName + "_the_end") : null;

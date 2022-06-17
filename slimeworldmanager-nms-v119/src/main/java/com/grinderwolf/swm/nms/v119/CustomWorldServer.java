@@ -16,15 +16,16 @@ import com.grinderwolf.swm.nms.CraftSlimeChunk;
 import com.grinderwolf.swm.nms.NmsUtil;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.DataResult;
+import com.mojang.serialization.Lifecycle;
 import lombok.Getter;
 import lombok.Setter;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Holder;
-import net.minecraft.core.Registry;
+import net.minecraft.core.*;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.dedicated.DedicatedServer;
+import net.minecraft.server.dedicated.DedicatedServerProperties;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.util.ProgressListener;
@@ -45,10 +46,12 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.*;
 import net.minecraft.world.level.chunk.storage.ChunkSerializer;
 import net.minecraft.world.level.chunk.storage.EntityStorage;
+import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.entity.ChunkEntities;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.WorldGenSettings;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.storage.PrimaryLevelData;
 import net.minecraft.world.level.storage.ServerLevelData;
@@ -81,6 +84,9 @@ public class CustomWorldServer extends ServerLevel {
     private final Object saveLock = new Object();
     private final BiomeSource defaultBiomeSource;
 
+    public final PrimaryLevelData serverLevelData;
+    private final WorldGenSettings worldGenSettings;
+
     @Getter
     @Setter
     private boolean ready = false;
@@ -89,13 +95,21 @@ public class CustomWorldServer extends ServerLevel {
                              ResourceKey<net.minecraft.world.level.Level> worldKey,
                              ResourceKey<LevelStem> dimensionKey, LevelStem worldDimension,
                              org.bukkit.World.Environment environment, org.bukkit.generator.ChunkGenerator gen,
-                             BiomeProvider biomeProvider) throws IOException {
+                             BiomeProvider biomeProvider, WorldGenSettings worldGenSettings) throws IOException {
 
         super(MinecraftServer.getServer(), MinecraftServer.getServer().executor,
                 v119SlimeNMS.CUSTOM_LEVEL_STORAGE.createAccess(world.getName() + UUID.randomUUID(),
                 dimensionKey), primaryLevelData, worldKey, worldDimension,
                 MinecraftServer.getServer().progressListenerFactory.create(11), false, 0,
                 Collections.emptyList(), true, environment, gen, biomeProvider);
+
+        System.out.println("CUSTOMWORLDSERVER: " + world.getName());
+        this.serverLevelData = primaryLevelData;
+        worldGenSettings.dimensions().getOrCreateHolderOrThrow(LevelStem.OVERWORLD);
+        this.worldGenSettings = worldGenSettings;
+
+        System.out.println("DOES IT CONTAIN? " + primaryLevelData.worldGenSettings().dimensions().containsKey(LevelStem.OVERWORLD));
+        System.out.println("PRIMARYDATA: " + getWorldGenSettings(MinecraftServer.getServer()).dimensions().entrySet().toString());
 
         this.slimeWorld = world;
 
@@ -115,6 +129,25 @@ public class CustomWorldServer extends ServerLevel {
         }
 
         this.keepSpawnInMemory = false;
+    }
+
+    private WorldGenSettings getWorldGenSettings(MinecraftServer server) {
+        DedicatedServerProperties serverProperties = ((DedicatedServer) server).getProperties();
+        // POSSIBLE FIX
+        Registry<LevelStem> dimensions = serverProperties.getWorldGenSettings(server.registryAccess()).dimensions();
+
+        WritableRegistry<LevelStem> writableRegistry = new MappedRegistry<>(Registry.LEVEL_STEM_REGISTRY, Lifecycle.experimental(), null);
+
+        for(Map.Entry<ResourceKey<LevelStem>, LevelStem> entry : dimensions.entrySet()) {
+            ResourceKey<LevelStem> resourceKey = entry.getKey();
+            writableRegistry.register(resourceKey, new LevelStem(entry.getValue().typeHolder(), entry.getValue().generator()), dimensions.lifecycle(entry.getValue()));
+        }
+
+        LevelStem overworldStem = new LevelStem(server.registryAccess().registryOrThrow(Registry.DIMENSION_TYPE_REGISTRY).getHolderOrThrow(BuiltinDimensionTypes.OVERWORLD), serverProperties.getWorldGenSettings(server.registryAccess()).overworld());
+
+        writableRegistry.register(LevelStem.OVERWORLD, overworldStem, Lifecycle.stable());
+
+        return new WorldGenSettings(0, false, false, writableRegistry);
     }
 
     @Override
