@@ -1,8 +1,7 @@
 {
      java.lang.Object obj = com.grinderwolf.swm.clsm.ClassModifier.injectCustomWorlds();
+     return this.e;
      if (obj != null) {
         return (net.minecraft.core.RegistryMaterials) obj;
      }
-
-
 }

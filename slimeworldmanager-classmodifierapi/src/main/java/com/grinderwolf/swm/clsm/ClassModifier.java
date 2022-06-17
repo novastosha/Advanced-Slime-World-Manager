@@ -63,7 +63,6 @@ public class ClassModifier {
     }
 
     public static Object injectCustomWorlds() {
-        System.out.println("ATTEMTPING INJECTION!");
         return customLoader.injectCustomWorlds();
     }
 }
