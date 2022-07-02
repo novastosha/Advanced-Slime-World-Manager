@@ -97,7 +97,7 @@ public class MongoLoader extends UpdatableLoader {
                     String worldName = documents.next().getString("name");
                     mongoCollection.updateOne(Filters.eq("name", worldName), Updates.set("locked", 0L));
                 }
-            },200L);
+            }, 200L);
         }
     }
 
