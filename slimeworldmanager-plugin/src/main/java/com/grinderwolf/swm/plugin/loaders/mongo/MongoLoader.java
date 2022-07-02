@@ -94,8 +94,8 @@ public class MongoLoader extends UpdatableLoader {
 
             Bukkit.getScheduler().scheduleSyncDelayedTask(SWMPlugin.getInstance(), () -> {
                 while (documents.hasNext()) {
-                    String worldName = documents.next().getString("name");
-                    mongoCollection.updateOne(Filters.eq("name", worldName), Updates.set("locked", 0L));
+                    String name = documents.next().getString("name");
+                    mongoCollection.updateOne(Filters.eq("name", name), Updates.set("locked", 0L));
                 }
             }, 200L);
         }
